@@ -1,0 +1,326 @@
+function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4, sel)
+    % --- KHAI BÁO HẰNG SỐ CỐ ĐỊNH ---
+    FILTER_ORDER = 22;   
+    MAX_P = 10;
+    AR_ORDER = 20;
+    FRAMELENGTH = 160;
+    
+    % --- KIỂM TRA ĐẦU VÀO ---
+    assert(p <= MAX_P);          
+    assert(p >= 1);
+    
+    % Khởi tạo outputs
+    y = 0.0;
+    e = 0.0;
+    W = zeros(FILTER_ORDER, 1);
+    W_true = zeros(FILTER_ORDER, 1);
+
+    % Persistent variables
+    persistent AF AR;
+    persistent sample_counter feedback_path_changed;
+    persistent change_sample current_feedback_path;
+
+    %% --- KHỞI TẠO (INITIALIZATION) ---
+    if isempty(AF)
+        % Khởi tạo AF structure
+        AF.gTD = zeros(FILTER_ORDER, 1);
+        AF.N = FILTER_ORDER;
+        AF.mu = miu;
+        AF.delta = delta;
+        AF.TDLLs = zeros(FILTER_ORDER, 1);
+        AF.TDLLswh = zeros(FILTER_ORDER, 1);
+        
+        % Khởi tạo mảng cho APA (Kích thước tĩnh MAX_P)
+        AF.P = p; 
+        AF.TDLLswh_d = zeros(FILTER_ORDER + MAX_P - 1, 1); 
+        AF.TDLMicwh = zeros(MAX_P, 1);     
+        AF.Lswh_ap = zeros(FILTER_ORDER, MAX_P); 
+        
+        AF.delta_IPAPA = 0;
+        AF.mu1 = 0.5 * mug;
+        AF.mu2 = 0.1 * mug;
+        
+        % Khởi tạo cho PEM-IPAPSA / PEM-MIPAPSA / PEM-BSMIPAPSA
+        AF.Q_tilde_prev = zeros(FILTER_ORDER, MAX_P - 1);
+        
+        % Khởi tạo AR structure
+        AR.N = AR_ORDER;
+        AR.w = [1; zeros(AR_ORDER-1, 1)];
+        AR.framelength = FRAMELENGTH;
+        AR.frameindex = 0;
+        AR.TDLMicdelay = zeros(FRAMELENGTH+1, 1);
+        AR.TDLLsdelay = zeros(FRAMELENGTH+1, 1);
+        % Đây là biến gây lỗi lúc nãy, nó đã được khai báo ở đây là TDLMicwh
+        AR.TDLMicwh = zeros(AR_ORDER, 1); 
+        AR.TDLLswh = zeros(AR_ORDER, 1);
+        AR.frame = zeros(FRAMELENGTH, 1);
+        
+        % Feedback path logic
+        sample_counter = 0;
+        feedback_path_changed = false;
+        change_sample = 480000;
+        current_feedback_path = 1;
+    end
+
+    %% --- XỬ LÝ CHÍNH (MAIN PROCESSING) ---
+    % Chuẩn hóa input
+    if ~isscalar(x), x = x(1); end
+    if ~isscalar(d), d = d(1); end
+
+    % Feedback path switching
+    sample_counter = sample_counter + 1;
+    if sample_counter >= 960000
+        sample_counter = 0;
+        feedback_path_changed = false;
+        current_feedback_path = 1;
+    end
+    if sample_counter >= change_sample && ~feedback_path_changed
+        feedback_path_changed = true;
+        current_feedback_path = 2;
+    end
+
+    AF.mu = miu;
+    
+    % 1. Cập nhật TDLLs
+    AF.TDLLs = [x; AF.TDLLs(1:end-1,1)];
+    
+    % 2. Tính error signal
+    e = d - AF.gTD' * AF.TDLLs;
+    
+    % 3. Clipping
+    e = 2*tanh(0.5*e);
+    
+    % 4, 5. Delay & Filter signals
+    [Micdelay, AR.TDLMicdelay] = delay_sample_inline(d, AR.framelength, AR.TDLMicdelay);
+    [Lsdelay, AR.TDLLsdelay] = delay_sample_inline(x, AR.framelength, AR.TDLLsdelay);
+    
+    % [ĐÃ SỬA LỖI TẠI ĐÂY] Dùng đúng tên biến AR.TDLMicwh
+    [Micwh, AR.TDLMicwh] = filter_sample_inline(Micdelay, AR.w, AR.TDLMicwh);
+    [Lswh, AR.TDLLswh] = filter_sample_inline(Lsdelay, AR.w, AR.TDLLswh);
+
+    % 6. Update AR-model
+    AR.frame(2:AR.framelength) = AR.frame(1:AR.framelength-1);
+    AR.frame(1) = e;
+    
+    % Levinson Logic
+    if and(AR.frameindex == AR.framelength-1, AR.N-1 > 0)
+        R = zeros(AR.N, 1);
+        for j = 1:AR.N
+            frame_segment = AR.frame(j:end);
+            pad_zeros = zeros(j-1, 1);
+            vec_mult = [frame_segment; pad_zeros];
+            R(j,1) = (AR.frame' * vec_mult) / AR.framelength;
+        end
+        [ar_coeffs, ~] = levinson(R, AR.N-1);
+        AR.w(1:length(ar_coeffs)) = ar_coeffs';
+        AR.w(length(ar_coeffs)+1:end) = 0;
+    end
+    AR.frameindex = AR.frameindex + 1;
+    if AR.frameindex == AR.framelength
+        AR.frameindex = 0;
+    end
+
+    % 7. Update TDLLswh
+    AF.TDLLswh = [Lswh; AF.TDLLswh(1:end-1,1)];
+    
+    % 8. Calculate ep
+    ep = Micwh - AF.gTD' * AF.TDLLswh;
+
+    %% --- XỬ LÝ APA/IPAPA (Static Memory) ---
+    AF.TDLMicwh = [Micwh; AF.TDLMicwh(1:end-1, 1)];
+    AF.TDLLswh_d = [Lswh; AF.TDLLswh_d(1:end-1, 1)];
+    
+    for i = 1:p 
+        vec_start = i;
+        vec_end = i + FILTER_ORDER - 1;
+        if vec_end <= length(AF.TDLLswh_d)
+            col_vec = AF.TDLLswh_d(vec_start : vec_end);
+        else
+            col_vec = zeros(FILTER_ORDER, 1);
+            avail = length(AF.TDLLswh_d) - vec_start + 1;
+            col_vec(1:avail) = AF.TDLLswh_d(vec_start:end);
+        end
+        AF.Lswh_ap(:, i) = col_vec; 
+    end
+    
+    Lswh_ap_active = AF.Lswh_ap(:, 1:p); 
+    TDLMicwh_active = AF.TDLMicwh(1:p);
+    ewh_p = TDLMicwh_active - Lswh_ap_active' * AF.gTD;
+
+    %% --- THUẬT TOÁN THÍCH NGHI ---
+    if sel == 1      % IPNLMS
+        aa = a;
+        kd = (1 - aa) / (2 * length(AF.gTD)) + (1 + aa) * abs(AF.gTD) / (AF.delta + 2 * sum(abs(AF.gTD)));
+        Kd = diag(kd);
+        denom = AF.TDLLswh' * Kd * AF.TDLLswh + AF.delta * (1 - aa) / (2 * length(AF.gTD));
+        AF.gTD = AF.gTD + (AF.mu / denom) * Kd * AF.TDLLswh .* ep;
+        
+    elseif sel == 4  % NLMS
+        AF.gTD = AF.gTD + (AF.mu / (norm(AF.TDLLswh)^2 + AF.delta)) * AF.TDLLswh .* ep;
+        
+    elseif sel == 5  % APA
+        AtA = Lswh_ap_active' * Lswh_ap_active;
+        A_mat = AF.delta * eye(p) + AtA;
+        rc = rcond(A_mat);
+        if ~isfinite(rc) || rc < 1e-10
+            A_mat = A_mat + (max(AF.delta, 1e-6) * 10) * eye(p);
+        end
+        update = Lswh_ap_active * (A_mat \ ewh_p);
+        AF.gTD = AF.gTD + AF.mu * update;
+        
+    elseif sel == 6  % IPAPA
+        aa = a;
+        AF.delta_IPAPA = AF.delta * (1 - aa) / (2 * length(AF.gTD));
+        kd = (1 - aa) / (2 * length(AF.gTD)) + (1 + aa) * abs(AF.gTD) / (AF.delta + 2 * sum(abs(AF.gTD)));
+        Kd = diag(kd);
+        AtKA = Lswh_ap_active' * Kd * Lswh_ap_active;
+        B_mat = AtKA + AF.delta_IPAPA * eye(p);
+        rb = rcond(B_mat);
+        if ~isfinite(rb) || rb < 1e-10
+            B_mat = B_mat + (max(AF.delta_IPAPA, 1e-6) * 10) * eye(p);
+        end
+        update = Kd * Lswh_ap_active * (B_mat \ ewh_p);
+        AF.gTD = AF.gTD + AF.mu * update;
+        
+    elseif sel == 7  % HNLMS
+        hv = e;
+        e_clipped = 2*tanh(0.5*e);
+        aaa = (abs(hv - e_clipped) < 0.15);
+        if ~isfield(AF, 'mu1'), AF.mu1 = 0.1 * mug; end
+        if ~isfield(AF, 'mu2'), AF.mu2 = 20 * mug; end
+        PEMSC_NLMS_term = AF.TDLLswh .* ep / (norm(AF.TDLLswh)^2 + AF.delta);
+        NLMS_term = AF.TDLLs .* e / (norm(AF.TDLLs)^2 + AF.delta);
+        AF.gTD = AF.gTD + aaa * AF.mu1 * PEMSC_NLMS_term + (1 - aaa) * AF.mu2 * NLMS_term;
+        
+    elseif sel == 8  % PEM-IPAPSA (Improved Proportionate APSA)
+        % Tham số proportionate
+        aa = a;  % beta trong bài báo
+        xi = AF.delta;  % xi = delta = 1e-6
+        eps_val = (1 - aa) / (2 * FILTER_ORDER) * AF.delta;  % epsilon
+        
+        % 1. Tính proportionate vector b_k(n) - eq.(16)
+        b = (1 - aa) / (2 * FILTER_ORDER) + ...
+            (1 + aa) * abs(AF.gTD) / (sum(abs(AF.gTD)) + xi);
+        B = diag(b);
+        
+        % 2. Tính u_{p,gs}(n) = B(n) * U_p(n) * sgn(e_p(n)) - eq.(15)
+        u_pgs = B * Lswh_ap_active * sign(ewh_p);
+        
+        % 3. Cập nhật trọng số - eq.(18)
+        denom = sqrt(u_pgs' * u_pgs + eps_val);
+        AF.gTD = AF.gTD + AF.mu * u_pgs / denom;
+        
+    elseif sel == 9  % PEM-MIPAPSA (Memory Improved PAPSA)
+        % Tham số proportionate
+        aa = a;
+        xi = AF.delta;
+        eps_val = (1 - aa) / (2 * FILTER_ORDER) * AF.delta;
+        
+        % 1. Tính proportionate vector b(n) - eq.(16)
+        b = (1 - aa) / (2 * FILTER_ORDER) + ...
+            (1 + aa) * abs(AF.gTD) / (sum(abs(AF.gTD)) + xi);
+        
+        % 2. Xây dựng Q_tilde(n) với memory - eq.(19)-(20)
+        %    Cột đầu tiên: b(n) .* u_p(n) (hiện tại)
+        %    Các cột còn lại: Q_tilde_prev (từ step trước)
+        current_col = b .* Lswh_ap_active(:, 1);  % b(n) ⊙ u_p(n)
+        
+        if p >= 2
+            Q_tilde = zeros(FILTER_ORDER, p);
+            Q_tilde(:, 1) = current_col;
+            cols_from_prev = min(p - 1, size(AF.Q_tilde_prev, 2));
+            Q_tilde(:, 2:1+cols_from_prev) = AF.Q_tilde_prev(:, 1:cols_from_prev);
+        else
+            Q_tilde = current_col;
+        end
+        
+        % 3. Tính u_tilde_{p,gs}(n) = Q_tilde(n) * sgn(e_p(n)) - eq.(20)
+        u_tilde_pgs = Q_tilde * sign(ewh_p);
+        
+        % 4. Cập nhật trọng số - eq.(21)
+        denom = sqrt(u_tilde_pgs' * u_tilde_pgs + eps_val);
+        AF.gTD = AF.gTD + AF.mu * u_tilde_pgs / denom;
+        
+        % 5. Lưu Q_tilde_prev cho step tiếp theo (shift columns)
+        if p >= 2
+            AF.Q_tilde_prev(:, 2:end) = AF.Q_tilde_prev(:, 1:end-1);
+            AF.Q_tilde_prev(:, 1) = current_col;
+        end
+        
+    elseif sel == 10  % PEM-BSMIPAPSA (Block-Sparse Memory IPAPSA)
+        % Tham số proportionate
+        aa = a;
+        xi = AF.delta;
+        eps_val = (1 - aa) / (2 * FILTER_ORDER) * AF.delta;
+        
+        % 1. Xác định số blocks M và chiều dài block N
+        %    Tự động chọn M sao cho N = FILTER_ORDER/M là số nguyên
+        M_bs = 2;  % Mặc định M=2 cho FILTER_ORDER=22 (N=11)
+        if mod(FILTER_ORDER, M_bs) ~= 0
+            M_bs = 1;  % Fallback: 1 block = toàn bộ bộ lọc
+        end
+        N_bs = FILTER_ORDER / M_bs;
+        
+        % 2. Tính block-sparse proportionate vector - eq.(24)
+        b_hat = zeros(FILTER_ORDER, 1);
+        block_norms = zeros(M_bs, 1);
+        for blk = 1:M_bs
+            idx_start = (blk - 1) * N_bs + 1;
+            idx_end = blk * N_bs;
+            block_norms(blk) = norm(AF.gTD(idx_start:idx_end), 2);
+        end
+        sum_block_norms = sum(block_norms);
+        
+        for blk = 1:M_bs
+            idx_start = (blk - 1) * N_bs + 1;
+            idx_end = blk * N_bs;
+            b_hat_k = (1 - aa) / (2 * FILTER_ORDER) + ...
+                      (1 + aa) * block_norms(blk) / (2 * M_bs * sum_block_norms + xi);
+            b_hat(idx_start:idx_end) = b_hat_k;
+        end
+        
+        % 3. Xây dựng Q_hat(n) với memory - eq.(23),(25)
+        current_col = b_hat .* Lswh_ap_active(:, 1);  % b_hat(n) ⊙ u_p(n)
+        
+        if p >= 2
+            Q_hat = zeros(FILTER_ORDER, p);
+            Q_hat(:, 1) = current_col;
+            cols_from_prev = min(p - 1, size(AF.Q_tilde_prev, 2));
+            Q_hat(:, 2:1+cols_from_prev) = AF.Q_tilde_prev(:, 1:cols_from_prev);
+        else
+            Q_hat = current_col;
+        end
+        
+        % 4. Tính u_hat_{p,gs}(n) = Q_hat(n) * sgn(e_p(n))
+        u_hat_pgs = Q_hat * sign(ewh_p);
+        
+        % 5. Cập nhật trọng số - eq.(25)
+        denom = sqrt(u_hat_pgs' * u_hat_pgs + eps_val);
+        AF.gTD = AF.gTD + AF.mu * u_hat_pgs / denom;
+        
+        % 6. Lưu Q_tilde_prev cho step tiếp theo (dùng chung buffer)
+        if p >= 2
+            AF.Q_tilde_prev(:, 2:end) = AF.Q_tilde_prev(:, 1:end-1);
+            AF.Q_tilde_prev(:, 1) = current_col;
+        end
+    end
+
+    % Output
+    if current_feedback_path == 1
+        W_true = g2;
+    else
+        W_true = g4;
+    end
+    W = AF.gTD;
+end
+
+%% Helper Functions
+function [output, delayline_out] = delay_sample_inline(x, delay, delayline_in)
+    delayline_out = [x; delayline_in(1:end-1,:)];
+    output = delayline_out(delay+1,:);
+end
+
+function [output, delayline_out] = filter_sample_inline(x, w, delayline_in)
+    delayline_out = [x; delayline_in(1:end-1,:)];
+    output = delayline_out' * w;
+end
