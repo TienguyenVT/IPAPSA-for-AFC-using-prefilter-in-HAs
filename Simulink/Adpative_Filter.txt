@@ -1,6 +1,6 @@
 function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4, sel)
     % --- KHAI BÁO HẰNG SỐ CỐ ĐỊNH ---
-    FILTER_ORDER = 22;   
+    FILTER_ORDER = 64;   
     MAX_P = 10;
     AR_ORDER = 20;
     FRAMELENGTH = 160;
@@ -148,17 +148,27 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
     ewh_p = TDLMicwh_active - Lswh_ap_active' * AF.gTD;
 
     %% --- THUẬT TOÁN THÍCH NGHI ---
-    if sel == 1      % IPNLMS
+    if sel == 1      % NLMS
+        AF.gTD = AF.gTD + (AF.mu / (norm(AF.TDLLswh)^2 + AF.delta)) * AF.TDLLswh .* ep;
+        
+    elseif sel == 2  % IPNLMS
         aa = a;
         kd = (1 - aa) / (2 * length(AF.gTD)) + (1 + aa) * abs(AF.gTD) / (AF.delta + 2 * sum(abs(AF.gTD)));
         Kd = diag(kd);
         denom = AF.TDLLswh' * Kd * AF.TDLLswh + AF.delta * (1 - aa) / (2 * length(AF.gTD));
         AF.gTD = AF.gTD + (AF.mu / denom) * Kd * AF.TDLLswh .* ep;
         
-    elseif sel == 4  % NLMS
-        AF.gTD = AF.gTD + (AF.mu / (norm(AF.TDLLswh)^2 + AF.delta)) * AF.TDLLswh .* ep;
+    elseif sel == 3  % HNLMS
+        hv = e;
+        e_clipped = 2*tanh(0.5*e);
+        aaa = (abs(hv - e_clipped) < 0.15);
+        if ~isfield(AF, 'mu1'), AF.mu1 = 0.1 * mug; end
+        if ~isfield(AF, 'mu2'), AF.mu2 = 20 * mug; end
+        PEMSC_NLMS_term = AF.TDLLswh .* ep / (norm(AF.TDLLswh)^2 + AF.delta);
+        NLMS_term = AF.TDLLs .* e / (norm(AF.TDLLs)^2 + AF.delta);
+        AF.gTD = AF.gTD + aaa * AF.mu1 * PEMSC_NLMS_term + (1 - aaa) * AF.mu2 * NLMS_term;
         
-    elseif sel == 5  % APA
+    elseif sel == 4  % APA
         AtA = Lswh_ap_active' * Lswh_ap_active;
         A_mat = AF.delta * eye(p) + AtA;
         rc = rcond(A_mat);
@@ -168,7 +178,7 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
         update = Lswh_ap_active * (A_mat \ ewh_p);
         AF.gTD = AF.gTD + AF.mu * update;
         
-    elseif sel == 6  % IPAPA
+    elseif sel == 5  % IPAPA
         aa = a;
         AF.delta_IPAPA = AF.delta * (1 - aa) / (2 * length(AF.gTD));
         kd = (1 - aa) / (2 * length(AF.gTD)) + (1 + aa) * abs(AF.gTD) / (AF.delta + 2 * sum(abs(AF.gTD)));
@@ -182,17 +192,7 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
         update = Kd * Lswh_ap_active * (B_mat \ ewh_p);
         AF.gTD = AF.gTD + AF.mu * update;
         
-    elseif sel == 7  % HNLMS
-        hv = e;
-        e_clipped = 2*tanh(0.5*e);
-        aaa = (abs(hv - e_clipped) < 0.15);
-        if ~isfield(AF, 'mu1'), AF.mu1 = 0.1 * mug; end
-        if ~isfield(AF, 'mu2'), AF.mu2 = 20 * mug; end
-        PEMSC_NLMS_term = AF.TDLLswh .* ep / (norm(AF.TDLLswh)^2 + AF.delta);
-        NLMS_term = AF.TDLLs .* e / (norm(AF.TDLLs)^2 + AF.delta);
-        AF.gTD = AF.gTD + aaa * AF.mu1 * PEMSC_NLMS_term + (1 - aaa) * AF.mu2 * NLMS_term;
-        
-    elseif sel == 8  % PEM-IPAPSA (Improved Proportionate APSA)
+    elseif sel == 6  % PEM-IPAPSA (Improved Proportionate APSA)
         % Tham số proportionate
         aa = a;  % beta trong bài báo
         xi = AF.delta;  % xi = delta = 1e-6
@@ -210,7 +210,7 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
         denom = sqrt(u_pgs' * u_pgs + eps_val);
         AF.gTD = AF.gTD + AF.mu * u_pgs / denom;
         
-    elseif sel == 9  % PEM-MIPAPSA (Memory Improved PAPSA)
+    elseif sel == 7  % PEM-MIPAPSA (Memory Improved PAPSA)
         % Tham số proportionate
         aa = a;
         xi = AF.delta;
@@ -247,18 +247,14 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
             AF.Q_tilde_prev(:, 1) = current_col;
         end
         
-    elseif sel == 10  % PEM-BSMIPAPSA (Block-Sparse Memory IPAPSA)
+    elseif sel == 8  % PEM-BSMIPAPSA (Block-Sparse Memory IPAPSA)
         % Tham số proportionate
         aa = a;
         xi = AF.delta;
         eps_val = (1 - aa) / (2 * FILTER_ORDER) * AF.delta;
         
         % 1. Xác định số blocks M và chiều dài block N
-        %    Tự động chọn M sao cho N = FILTER_ORDER/M là số nguyên
-        M_bs = 2;  % Mặc định M=2 cho FILTER_ORDER=22 (N=11)
-        if mod(FILTER_ORDER, M_bs) ~= 0
-            M_bs = 1;  % Fallback: 1 block = toàn bộ bộ lọc
-        end
+        M_bs = 8;  
         N_bs = FILTER_ORDER / M_bs;
         
         % 2. Tính block-sparse proportionate vector - eq.(24)
@@ -306,10 +302,15 @@ function [y, e, W, W_true] = Adaptive_Filter(x, d, miu, p, mug, delta, a, g2, g4
     end
 
     % Output
+    % FIX CODER ERROR: Ép cố định kích thước của W_true là FILTER_ORDER x 1
+    % Tránh việc Simulink hiểu nhầm W_true bị đổi kích thước (variable-size) do g2/g4
+    W_true = zeros(FILTER_ORDER, 1);
     if current_feedback_path == 1
-        W_true = g2;
+        len_g2 = min(length(g2), FILTER_ORDER);
+        W_true(1:len_g2) = g2(1:len_g2);
     else
-        W_true = g4;
+        len_g4 = min(length(g4), FILTER_ORDER);
+        W_true(1:len_g4) = g4(1:len_g4);
     end
     W = AF.gTD;
 end

@@ -1,0 +1,251 @@
+import numpy as np
+from loader import load_mat_data
+from plot import *
+from modify import modify
+from csv_ import *
+from init import init_parameter
+from clean  import clear_folder
+
+direction   = 'D:\\De_tai_sinh_vien\\code_chuan\\' 
+sound_path  = 'D:\\De_tai_sinh_vien\\code_chuan\\sound\\ex_eusipco_2010.mat'
+figure_path = 'D:\\De_tai_sinh_vien\\code_chuan\\figure\\'
+csv_path    = 'D:\\De_tai_sinh_vien\\code_chuan\\csv\\'
+
+names = ['APA', 'NLMS', 'IPNLMS', 'IPAPA']  # List of names for each select
+x, d, miu, ord, p, dlt, a, h1, N = load_mat_data(f'{sound_path}') # Load data from the .mat file
+t = np.linspace(0, N / 8000, N) # time vector
+
+def menu_all():
+    print("*----------------------------------------------------*")
+    print("| choice a (all)    to run the system                |")
+    print("| choice 1 (APA)    to run the system with select  1 |")
+    print("| choice 2 (NLMS)   to run the system with select  2 |")
+    print("| choice 3 (IPNLMS) to run the system with select  3 |")
+    print("| choice 4 (IPAPA)  to run the system with select  4 |")
+    print("| choice c to clear the figure and csv folder        |")
+    print("| choice s to show the figure                        |")
+    print("| choice t to caculate average of misaligment        |")
+    print("| choice q to quit the system                        |")
+    print("*----------------------------------------------------*")
+
+def menu_show():
+    print("*----------------------------------------------------*")
+    print("| select 1 to show APA figure                        |")
+    print("| select 2 to show NLMS figure                       |")
+    print("| select 3 to show IPNLMS figure                     |")
+    print("| select 4 to show IPAPA figure                      |")
+    print("| select a to show combined figure                   |")
+    print("| select q to quit the system                        |")
+    print("*----------------------------------------------------*")
+
+def menu_cacuelate():
+    print("*----------------------------------------------------*")
+    print("| select 1 to calculate average of APA               |")
+    print("| select 2 to calculate average of NLMS              |")
+    print("| select 3 to calculate average of IPNLMS            |")
+    print("| select 4 to calculate average of IPAPA             |")
+    print("| select a to calculate average of all select        |")
+    print("| select q to quit the system                        |")
+    print("*----------------------------------------------------*")
+
+def calculate_average(csv_file_path, start_time, end_time, select):
+    average_misalignment = calculate_average_misalignment(csv_file_path, start_time, end_time, select)
+    if average_misalignment is not None:
+        print(f"Average Misalignment for {names[select-1]}  from {start_time} to {end_time} seconds: {average_misalignment}")
+    else:
+        print(f"No misalignment values found for {names[select-1]}  in the specified time range.")
+
+def run(select):
+    clear_folder(f'{figure_path}')
+    clear_folder(f'{csv_path}') 
+    m , w = modify(x, d, miu, ord, p, dlt, a, h1, select)
+    plot_one_misalignment(t, m,select)
+    # Save misalignment values to CSV
+    csv_file_path_1 = f'{csv_path}misalignment_{names[select-1]}.csv'
+    save_misalignment_to_csv(csv_file_path_1, t, m, select)
+    return m, w
+
+def run_all():
+    clear_folder(f'{figure_path}')
+    clear_folder(f'{csv_path}') 
+    for select in range(1, 5):
+        m, w = modify(x, d, miu, ord, p, dlt, a, h1, select)
+        my_list.append(m)
+        plot_one_misalignment(t, m, select)
+        # Save misalignment values to CSV
+        csv_file_path_run_all = f'{csv_path}misalignment_{names[select-1]}.csv'
+        save_misalignment_to_csv(csv_file_path_run_all, t, m, select)
+    plot_misalignment(t, my_list)
+
+def main():
+    check = 0 
+    clear_folder(f'{figure_path}')
+    clear_folder(f'{csv_path}') 
+    menu_all()
+    while True:
+        choice = input("Do you want to run the system ? : ")
+        if   choice == 'h':
+            menu_all()
+        elif choice == 'a':
+            check = 5 
+            run_all()
+        elif choice == '1':
+            check = 1 
+            run(1)
+        elif choice == '2':
+            check = 2
+            run(2)
+        elif choice == '3':
+            check = 3
+            run(3)
+        elif choice == '4':
+            check = 4
+            run(4)
+        elif choice == 'c':
+            clear_folder(f'{figure_path}')
+            clear_folder(f'{csv_path}') 
+            check = 0
+            reset_variables()
+        elif choice == 's':
+            menu_show()
+            while True:
+                select_to_show = input("Enter the select you want to show: ")
+                if select_to_show == 'h':
+                    menu_show()
+                elif check == 0:
+                    if select_to_show == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no pigure found !")
+                elif check == 1:
+                    if select_to_show == '1':
+                        show_figure(f'{figure_path}APA.png')
+                    elif select_to_show == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no pigure found !")
+                elif check == 2:
+                    if select_to_show == '2':
+                        show_figure(f'{figure_path}NLMS.png')
+                    elif select_to_show == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no pigure found !")
+                elif check == 3:
+                    if select_to_show == '3':
+                        show_figure(f'{figure_path}IPNLMS.png')
+                    elif select_to_show == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no pigure found !")
+                elif check == 4:
+                    if select_to_show == '4':
+                        show_figure(f'{figure_path}IAPA.png')
+                    else :
+                        print("no pigure found !")
+
+                elif check == 5:
+                    if select_to_show == '1':
+                        show_figure(f'{figure_path}APA.png')
+                    elif select_to_show == '2':
+                        show_figure(f'{figure_path}NLMS.png')
+                    elif select_to_show == '3':
+                        show_figure(f'{figure_path}IPNLMS.png')
+                    elif select_to_show == '4':
+                        show_figure(f'{figure_path}IAPA.png')
+                    elif select_to_show == 'a':
+                        show_figure(f'{figure_path}combined_plot.png')
+                    elif select_to_show == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no pigure found !")
+                elif select_to_show == 'q':
+                    print("quit !")
+                    print("return to the main menu !\n")
+                    break
+        elif choice == 't':
+            menu_cacuelate()
+            while True:
+                select_to_cal = input("Enter the select you want to calculate: ")
+                if select_to_cal == 'h':
+                    menu_cacuelate()
+                elif check == 0:
+                    if select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+
+                    else :
+                        print("no misalignment values found select in the specified time range.")
+
+                elif check == 1:
+                    if select_to_cal == '1':
+                        calculate_average(f'{csv_path}misalignment_APA.csv', 0, 0.08, 1)
+                    elif select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :  
+                        print("no misalignment values found select in the specified time range.")
+                elif check == 2:
+                    if select_to_cal == '2':
+                        calculate_average(f'{csv_path}misalignment_NLMS.csv', 0, 0.08, 2)
+                    elif select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no misalignment values found select in the specified time range.")
+                elif check == 3:
+                    if select_to_cal == '3':
+                        calculate_average(f'{csv_path}misalignment_IPNLMS.csv', 0, 0.08, 3)
+                    elif select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no misalignment values found select in the specified time range.")
+                elif check == 4:
+                    if select_to_cal == '4':
+                        calculate_average(f'{csv_path}misalignment_IPAPA.csv', 0, 0.08, 4)
+                    elif select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no misalignment values found select in the specified time range.")
+                elif check == 5:
+                    if select_to_cal == 'a':
+                        for select in range(1, 5):
+                            calculate_average(f'{csv_path}misalignment_{names[select-1]}.csv', 0, 0.08, select)
+                    elif select_to_cal == '1':
+                        calculate_average(f'{csv_path}misalignment_APA.csv', 0, 0.08, 1)
+                    elif select_to_cal == '2':
+                        calculate_average(f'{csv_path}misalignment_NLMS.csv', 0, 0.08, 2)
+                    elif select_to_cal == '3':
+                        calculate_average(f'{csv_path}misalignment_IPNLMS.csv', 0, 0.08, 3)
+                    elif select_to_cal == '4':
+                        calculate_average(f'{csv_path}misalignment_IPAPA.csv', 0, 0.08, 4)
+                    elif select_to_cal == 'q':
+                        print("quit !")
+                        print("return to the main menu !\n")
+                        break
+                    else :
+                        print("no misalignment values found select in the specified time range.")
+                elif select_to_cal == 'q':
+                    print("quit !")
+                    print("return to the main menu !\n")
+                    break
+        elif choice == 'q':
+            print("quit !")
+            break

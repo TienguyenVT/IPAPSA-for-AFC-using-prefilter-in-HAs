@@ -1,0 +1,70 @@
+function [MIS_current, ASG_current, aveMis, aveASG] = AFC_Performance_Monitor(W_true, W_hat)
+% AFC_Performance_Monitor
+% Tính MIS (Misalignment) và ASG (Added Stable Gain) theo từng mẫu để
+% xuất trực tiếp sang Scope trong Simulink. Đồng thời duy trì giá trị
+% trung bình (running average) của MIS và ASG trong suốt phiên mô phỏng.
+%
+% INPUTS:
+%   W_true : vector hệ số feedback path thật (kích thước Lx1 hoặc 1xL)
+%   W_hat  : vector hệ số ước lượng (kích thước Lx1 hoặc 1xL)
+%
+% OUTPUTS:
+%   MIS_current : giá trị MIS hiện thời (dB)
+%   ASG_current : giá trị ASG hiện thời (dB)
+%   aveMis      : trung bình MIS tính đến thời điểm hiện tại (dB)
+%   aveASG      : trung bình ASG tính đến thời điểm hiện tại (dB)
+
+% Chuẩn hóa kích thước vector cột
+g_current = W_true(:);
+g_hat_current = W_hat(:);
+
+% Độ dài bộ lọc và Nfreq đồng bộ theo MIS_cal.m / PEM_TDfeedback_Modified_simulink.m
+filter_length = length(g_current);
+if filter_length == 0
+    MIS_current = 0; ASG_current = 0; aveMis = 0; aveASG = 0; return; %#ok<*NASGU>
+end
+Nfreq = filter_length;
+
+% Biến persistent cho trung bình cộng dồn
+persistent sumMIS sumASG nSamples
+if isempty(nSamples)
+    sumMIS = 0;
+    sumASG = 0;
+    nSamples = 0;
+end
+
+% Tiền xử lý đồng bộ MIS_cal.m / PEM_TDfeedback_Modified_simulink.m
+% - Remove DC cho đường thật
+% - Chèn trễ d_fb cho cả thật và ước lượng
+d_fb = 16; % phải trùng với mô phỏng
+g_true_nodc = g_current - mean(g_current);
+g_true_delayed = [zeros(d_fb,1); g_true_nodc; 0];
+g_hat_delayed  = [zeros(d_fb,1); g_hat_current];
+
+% Phổ tần số của hệ số thật và ước lượng
+G_freq = fft(g_true_delayed, Nfreq);
+G_hat_freq = fft(g_hat_delayed, Nfreq);
+
+% Sai số ước lượng ở miền tần số (nửa dải tần)
+half_idx = 1:ceil(Nfreq/2);
+G_tilde = G_freq(half_idx) - G_hat_freq(half_idx);
+
+% MIS hiện thời (đồng bộ công thức)
+den_norm = norm(G_freq(half_idx));
+% Thêm eps nhỏ để tránh NaN trong mô phỏng số mà không thay đổi định nghĩa
+MIS_current = 20*log10(norm(G_tilde)/(den_norm + eps));
+
+% MSG và ASG hiện thời (đồng bộ phạm vi tần số của ASG: 1:Nfreq/2+1)
+G_tilde_abs = abs(G_tilde);
+MSG_current = 20*log10(min(1./(G_tilde_abs + eps)));
+G_freq_abs = abs(G_freq(1:(Nfreq/2+1)));
+ASG_current = MSG_current - 20*log10(min(1./(G_freq_abs + eps)));
+
+% Cập nhật trung bình cộng dồn
+nSamples = nSamples + 1;
+sumMIS = sumMIS + MIS_current;
+sumASG = sumASG + ASG_current;
+aveMis = sumMIS / nSamples;
+aveASG = sumASG / nSamples;
+
+end

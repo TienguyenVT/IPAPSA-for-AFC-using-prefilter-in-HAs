@@ -1,0 +1,36 @@
+# MATLAB-specific
+*.asv
+*.mex*
+*.slxc
+*.p
+*.mlappsrc
+*.jdb
+*.autosave
+*.mlappinstall
+*.mlpkginstall
+*.mltbx
+*.cdat
+*.lct
+*.mldatx
+*.sdat
+slprj/
+cat_slprj/
+_slprj/
+
+# Large data/binary files (usually generated or local)
+*.mat
+*.bin
+*.wav
+*.log
+
+# Backup/Temp files
+*.original
+*~
+.#*
+*.bak
+
+# OS-specific
+.DS_Store
+Thumbs.db
+desktop.ini
+/Results

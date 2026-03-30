@@ -1,0 +1,43 @@
+function [n_bgr_out, n_imp_out] = Change_Noise(babble_in, imp_in, alpha_bab, alpha_imp)
+% =========================================================================
+% CHANGE_NOISE - Simulink MATLAB Function Block
+%
+% Scale nhiễu bằng hệ số alpha CỐ ĐỊNH (đã tính sẵn trong workspace
+% bởi Init_noise.m), giống hệt hàm add_noise.m của Hệ thống A.
+%
+% INPUTS:
+%   babble_in  : Nhiễu babble từ "From Multimedia File" (scalar, đã resample)
+%   imp_in     : Nhiễu xung - TOÀN BỘ vector n_imp từ workspace (960000x1)
+%   alpha_bab  : Hệ số scale babble (Constant block, tính từ Init_noise.m)
+%   alpha_imp  : Hệ số scale impulsive (Constant block, tính từ Init_noise.m)
+%
+% OUTPUTS:
+%   n_bgr_out  : Nhiễu nền đã scale (scalar) → đưa vào Add_noise
+%   n_imp_out  : Nhiễu xung đã scale (scalar) → đưa vào Add_noise
+% =========================================================================
+
+    % Biến đếm để trích từng mẫu từ vector imp_in
+    persistent idx
+    if isempty(idx)
+        idx = 1;
+    end
+
+    % --- TRÍCH MẪU NHIỄU XUNG ---
+    if length(imp_in) > 1
+        % imp_in là vector đầy đủ từ workspace
+        if idx <= length(imp_in)
+            current_imp = imp_in(idx);
+        else
+            current_imp = 0;
+        end
+        idx = idx + 1;
+    else
+        % imp_in đã là scalar
+        current_imp = imp_in;
+    end
+
+    % --- SCALE NHIỄU (giống hệt add_noise.m: scaledNoise = alpha * n) ---
+    n_bgr_out = alpha_bab * babble_in;
+    n_imp_out = alpha_imp * current_imp;
+
+end

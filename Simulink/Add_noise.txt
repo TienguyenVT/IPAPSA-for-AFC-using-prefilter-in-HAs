@@ -1,0 +1,39 @@
+function u_noisy = Add_noise(u_clean, n_bgr, n_imp, n_sel)
+% ADD_NOISE - Simulink MATLAB Function Block
+% Thêm nhiễu nền và nhiễu xung vào tín hiệu speech/music sạch.
+%
+% Tất cả nhiễu đã được tiền xử lý (resample + scale theo SNR/SIR)
+% trong script Init_noise.m và đưa vào qua "From Workspace" block.
+%
+% INPUTS:
+%   u_clean : Mẫu tín hiệu sạch (speech hoặc music), scalar
+%             Đến từ nguồn speech/music có sẵn trong Simulink
+%   n_bgr   : Mẫu nhiễu nền đã scale (babble/factory/white...), scalar
+%             Đến từ "From Workspace" block (ts_bgr_babble)
+%   n_imp   : Mẫu nhiễu xung đã scale (Bernoulli-Gaussian), scalar
+%             Đến từ "From Workspace" block (ts_n_imp)
+%   n_sel   : Chọn chế độ thêm nhiễu, scalar
+%             0 = không thêm nhiễu (giữ nguyên tín hiệu sạch)
+%             1 = chỉ thêm nhiễu nền (background noise)
+%             2 = chỉ thêm nhiễu xung (impulsive noise)
+%             3 = thêm cả nhiễu nền + nhiễu xung (giống Hệ thống A)
+%
+% OUTPUT:
+%   u_noisy : Mẫu tín hiệu đã thêm nhiễu, scalar
+
+    if n_sel == 0
+        % Không thêm nhiễu
+        u_noisy = u_clean;
+    elseif n_sel == 1
+        % Chỉ thêm nhiễu nền (babble/factory/white...)
+        u_noisy = u_clean + n_bgr;
+    elseif n_sel == 2
+        % Chỉ thêm nhiễu xung (impulsive)
+        u_noisy = u_clean + n_imp;
+    else
+        % n_sel == 3 hoặc khác: Thêm cả hai (giống Hệ thống A)
+        % Tương ứng: u = u_bab + scaled_imp trong Hệ thống A
+        u_noisy = u_clean + n_bgr + n_imp;
+    end
+
+end
